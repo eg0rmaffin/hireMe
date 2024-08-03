@@ -10,12 +10,16 @@ access_token = os.getenv("ACCESS_TOKEN")
 # Ваш ID резюме
 resume_id = os.getenv("RESUME_ID")
 
-# Файлы для учета вакансий
+# Файлы для учета вакансий и исключенных работодателей
 SENDED_FILE = 'sended'
 ACTION_REQUIRED_FILE = 'action_required'
+EXCLUDED_EMPLOYERS_FILE = 'excluded_employers'
 
 # Города, исключенные из поиска
-excluded_cities = ["Москва", "Санкт-Петербург"]
+excluded_cities = ["Караганда"]
+
+# Слова, исключенные из поиска
+excluded_words = ["QA", "Junior", "Ментор", "Android"]
 
 # Настройка заголовков для авторизации
 headers = {
@@ -42,7 +46,8 @@ def search_vacancies(page):
     params = {
         'text': 'Java',
         'per_page': 20,
-        'page': page
+        'page': page,
+        'area': 113  # Код России в HeadHunter
     }
     response = requests.get(url, headers=headers, params=params)
     if response.status_code == 200:
@@ -63,10 +68,19 @@ def apply_to_vacancy(vacancy_id, resume_id):
         if 'Letter required' in response.text:
             write_id(ACTION_REQUIRED_FILE, vacancy_id)
 
+def contains_excluded_word(text, excluded_words):
+    """Проверяет, содержит ли текст какое-либо из исключенных слов."""
+    text_lower = text.lower()
+    for word in excluded_words:
+        if word.lower() in text_lower:
+            return True
+    return False
+
 def main():
     page = 0
     sended_ids = read_ids(SENDED_FILE)
     action_required_ids = read_ids(ACTION_REQUIRED_FILE)
+    excluded_employers = read_ids(EXCLUDED_EMPLOYERS_FILE)
     
     while True:
         vacancies_data = search_vacancies(page)
@@ -79,7 +93,11 @@ def main():
 
         for vacancy in vacancies:
             vacancy_id = vacancy.get('id')
+            employer_id = vacancy.get('employer', {}).get('id')
             city = vacancy.get('area', {}).get('name', '')
+
+            # Получение названия вакансии
+            name = vacancy.get('name', '').lower()
 
             if not vacancy_id:
                 print(f"Skipping vacancy due to missing ID: {vacancy}")
@@ -89,10 +107,20 @@ def main():
                 print(f"Already processed vacancy with ID: {vacancy_id}")
                 continue
 
-            if city not in excluded_cities:
-                apply_to_vacancy(vacancy_id, resume_id)
-                # Пауза между запросами для предотвращения превышения лимитов
-                time.sleep(1)
+            if employer_id in excluded_employers:
+                print(f"Skipping vacancy from excluded employer: {employer_id}")
+                continue
+
+            # Проверка наличия исключенных слов только в заголовке вакансии
+            if city not in excluded_cities and 'java' in name:
+                if not contains_excluded_word(name, excluded_words):
+                    apply_to_vacancy(vacancy_id, resume_id)
+                    # Пауза между запросами для предотвращения превышения лимитов
+                    time.sleep(1)
+                else:
+                    print(f"Excluded by word filter: {name}")
+            else:
+                print(f"Excluded by city or keyword filter: {name} - {city}")
 
         # Проверяем, достигли ли мы последней страницы
         if vacancies_data['pages'] - 1 == page:
