@@ -1,7 +1,9 @@
 import requests
+import json
 import time
 import os
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 
@@ -15,11 +17,17 @@ SENDED_FILE = 'sended'
 ACTION_REQUIRED_FILE = 'action_required'
 EXCLUDED_EMPLOYERS_FILE = 'excluded_employers'
 
-# Города, исключенные из поиска
-excluded_cities = ["Караганда"]
 
-# Слова, исключенные из поиска
-excluded_words = ["QA", "Junior", "Ментор", "Android"]
+# Загружаем конфиг
+with open("cfg.json", "r", encoding="utf-8") as cfg_file:
+    cfg = json.load(cfg_file)
+
+keywords = cfg["keywords"]
+excluded_cities = set(cfg["excluded_cities"])
+excluded_words = set([w.lower() for w in cfg["excluded_words"]])
+area = cfg["area"]
+per_page = cfg["per_page"]
+
 
 # Настройка заголовков для авторизации
 headers = {
@@ -31,23 +39,36 @@ def read_ids(file_path):
     """Читает ID из файла и возвращает их в виде множества."""
     if not os.path.exists(file_path):
         return set()
-    with open(file_path, 'r') as file:
-        ids = file.read().splitlines()
-    return set(ids)
+    ids = set()
+    with open(file_path, 'r', encoding='utf-8') as file:
+        for line in file:
+            # Ищем кусок вида "id: 123456"
+            if "id:" in line:
+                try:
+                    parts = line.split("id:")[1].strip().split("|")[0]
+                    vacancy_id = parts.strip()
+                    ids.add(vacancy_id)
+                except IndexError:
+                    continue
+    return ids
 
-def write_id(file_path, vacancy_id):
-    """Записывает ID вакансии в файл."""
-    with open(file_path, 'a') as file:
-        file.write(f"{vacancy_id}\n")
+
+def write_log(file_path, vacancy_id, name, city, reason=None):
+    """Записывает ID + название + город + причину (если есть)."""
+    date = datetime.now().strftime("%Y-%m-%d %H:%M")
+    reason_text = f" | reason: {reason}" if reason else ""
+    line = f"{date} | id: {vacancy_id} | {name} | {city}{reason_text}\n"
+    with open(file_path, 'a', encoding='utf-8') as file:
+        file.write(line)
 
 def search_vacancies(page):
     """Ищет вакансии на указанной странице."""
     url = 'https://api.hh.ru/vacancies'
     params = {
-        'text': 'Java',
-        'per_page': 20,
+        'text': " OR ".join(keywords),
+        'per_page': per_page,
         'page': page,
-        'area': 113  # Код России в HeadHunter
+        'area': area
     }
     response = requests.get(url, headers=headers, params=params)
     if response.status_code == 200:
@@ -56,17 +77,22 @@ def search_vacancies(page):
         print(f"Failed to search vacancies: {response.status_code} - {response.text}")
         return None
 
-def apply_to_vacancy(vacancy_id, resume_id):
+
+def apply_to_vacancy(vacancy_id, resume_id, name, city):
     """Подает отклик на вакансию."""
     url = f'https://api.hh.ru/negotiations?vacancy_id={vacancy_id}&resume_id={resume_id}'
     response = requests.post(url, headers=headers)
+
     if response.status_code == 201:
-        print(f"Successfully applied to vacancy {vacancy_id} with resume {resume_id}")
-        write_id(SENDED_FILE, vacancy_id)
+        print(f"Successfully applied to vacancy {vacancy_id} ({name} - {city})")
+        write_log(SENDED_FILE, vacancy_id, name, city)
     else:
-        print(f"Failed to apply to vacancy {vacancy_id}: {response.status_code} - {response.text}")
+        print(f"Failed to apply to vacancy {vacancy_id} ({name} - {city}): {response.status_code} - {response.text}")
         if 'Letter required' in response.text:
-            write_id(ACTION_REQUIRED_FILE, vacancy_id)
+            write_log(ACTION_REQUIRED_FILE, vacancy_id, name, city, reason="letter_required")
+        elif 'test_required' in response.text:
+            write_log(ACTION_REQUIRED_FILE, vacancy_id, name, city, reason="test_required")
+
 
 def contains_excluded_word(text, excluded_words):
     """Проверяет, содержит ли текст какое-либо из исключенных слов."""
@@ -112,9 +138,9 @@ def main():
                 continue
 
             # Проверка наличия исключенных слов только в заголовке вакансии
-            if city not in excluded_cities and 'java' in name:
+            if city not in excluded_cities and any(kw.lower() in name for kw in keywords):    
                 if not contains_excluded_word(name, excluded_words):
-                    apply_to_vacancy(vacancy_id, resume_id)
+                    apply_to_vacancy(vacancy_id, resume_id, name, city)
                     # Пауза между запросами для предотвращения превышения лимитов
                     time.sleep(1)
                 else:
