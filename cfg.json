@@ -3,5 +3,5 @@
   "excluded_cities": ["Караганда"],
   "excluded_words": ["qa", "junior", "ментор", "android"],
   "area": 113,
-  "per_page": 20
+  "per_page": 50
 }
