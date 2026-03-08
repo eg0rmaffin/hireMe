@@ -1,5 +1,5 @@
 {
-  "keywords": ["Java", "Go", "Golang"], 
+  "keywords": ["Java"], 
   "excluded_cities": ["Караганда"],
   "excluded_words": ["qa", "junior", "ментор", "android"],
   "area": 113,
